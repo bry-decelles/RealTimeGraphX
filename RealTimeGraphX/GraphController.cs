@@ -209,16 +209,97 @@ namespace RealTimeGraphX
 
             ClearCommand = new GraphCommand(Clear);
 
-            _render_thread = new Thread(RenderThreadMethod);
+            /*_render_thread = new Thread(RenderThreadMethod);
             _render_thread.IsBackground = true;
             _render_thread.Priority = ThreadPriority.Highest;
-            _render_thread.Start();
+            _render_thread.Start();*/
+
+            // This doesn't block the UI as often as the above thread
+            Task.Factory.StartNew(RenderTaskMethod, TaskCreationOptions.LongRunning);
         }
 
         #endregion
 
         #region Render Thread
+        private async Task RenderTaskMethod()
+        {
+            while (true)
+            {
+                if ((!IsPaused && !DisableRendering) || _clear)
+                {
+                    try
+                    {
+                        List<List<PendingSeries>> pending_lists = new List<List<PendingSeries>>();
 
+                        var pending_list_first = _pending_series_collection.BlockDequeue();
+
+                        if (_clear)
+                        {
+                            _clear = false;
+                            _to_render.Clear();
+                            Surface?.BeginDraw();
+                            Surface?.EndDraw();
+
+                            while (_pending_series_collection.Count > 0)
+                            {
+                                _pending_series_collection.BlockDequeue();
+                            }
+                            continue;
+                        }
+
+                        pending_lists.Add(pending_list_first);
+
+                        while (_pending_series_collection.Count > 0)
+                        {
+                            var pending_list = _pending_series_collection.BlockDequeue();
+                            pending_lists.Add(pending_list);
+                        }
+
+                        foreach (var pending_list in pending_lists)
+                        {
+                            foreach (var pending_series in pending_list)
+                            {
+                                if (!pending_series.IsUpdateSeries)
+                                {
+                                    if (_to_render.ContainsKey(pending_series.Series))
+                                    {
+                                        var s = _to_render[pending_series.Series];
+                                        s.XX.AddRange(pending_series.XX);
+                                        s.YY.AddRange(pending_series.YY);
+                                    }
+                                    else
+                                    {
+                                        _to_render[pending_series.Series] = pending_series;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (Surface != null)
+                        {
+                            Render();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"Error in RealTimeGraphX:\n{ex.ToString()}");
+                    }
+                    // Should I add Thread.Sleep(RefreshRate); here?
+                }
+                else if (IsPaused && !DisableRendering)
+                {
+                    if (Surface != null)
+                    {
+                        Render();
+                    }
+                    await Task.Delay(RefreshRate);
+                }
+                else
+                {
+                    await Task.Delay(RefreshRate);
+                }
+            }
+        }
         /// <summary>
         /// The rendering thread method.
         /// </summary>
