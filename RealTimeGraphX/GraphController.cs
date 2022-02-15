@@ -301,6 +301,15 @@ namespace RealTimeGraphX
             }
         }
 
+        /// <summary>
+        /// Render controller points to graph surface
+        /// </summary>
+        /// <remarks>
+        /// There is a point of contention here. 
+        /// If one thread is already calling Render while another comes in that has the points invisible (null)
+        /// Then the thread that is null can set the VirtualRangeMaximum/Minimum properties to null and can bring the application down
+        /// When trying to update the surface. in OnVirtualRangeChange
+        /// </remarks>
         private void Render()
         {
             if (_to_render.Count > 0)
@@ -322,12 +331,18 @@ namespace RealTimeGraphX
 
                 if (_range.AutoY)
                 {
-                    min_y = _to_render.Select(x => x.Value).SelectMany(x => x.YY).Min();
-                    max_y = _to_render.Select(x => x.Value).SelectMany(x => x.YY).Max();
+                    // This is super expensive for large datasets
+                    var visiblePoints = _to_render.Where(x => x.Key.IsVisible).Select(x => x.Value).SelectMany(x => x.YY);
+                    if (visiblePoints is null)
+                        return;
+                    min_y = visiblePoints.Min();
+                    max_y = visiblePoints.Max();
                 }
 
                 if (min_y == max_y)
                 {
+
+
                     if (_range.AutoYFallbackMode == GraphRangeAutoYFallBackMode.MinMax)
                     {
                         min_y = _range.MinimumY;
@@ -335,10 +350,16 @@ namespace RealTimeGraphX
                     }
                     else if (_range.AutoYFallbackMode == GraphRangeAutoYFallBackMode.Margins)
                     {
+                        if (min_y is null)
+                            min_y = _range.MinimumY;
                         min_y -= _range.AutoYFallbackMargins;
+
+                        if (max_y is null)
+                            max_y = _range.MaximumY;
                         max_y += _range.AutoYFallbackMargins;
                     }
                 }
+
 
                 EffectiveMinimumX = min_x;
                 EffectiveMaximumX = max_x;
@@ -399,7 +420,8 @@ namespace RealTimeGraphX
                             {
                                 item.Series.CurrentValue = item.YY.Last().GetValue();
                             }
-
+                            if (max_y is null)
+                                max_y = _range.MaximumY;
                             var points = Renderer.Render(Surface, item.Series, _range, item.XX, item.YY, min_x, max_x, min_y, max_y);
                             to_draw.Add(new Tuple<TDataSeries, IEnumerable<PointF>>(item.Series, points));
                         }
@@ -414,8 +436,34 @@ namespace RealTimeGraphX
                                 }
                             }
                         }
-
                         Surface?.EndDraw();
+                    }
+                    else
+                    {
+                        /// HACK: This is to fix an issue where a scrolling line renderer will just pile up data points if not visible
+                        /// So for this we need to purge the data points if they are older than the offset defined for the graph.
+                        /// <see cref="ScrollingLineRenderer{TDataSeries}.Render(IGraphSurface{TDataSeries}, TDataSeries, IGraphRange, List{GraphDataPoint}, List{GraphDataPoint}, GraphDataPoint, GraphDataPoint, GraphDataPoint, GraphDataPoint)"/>
+                        foreach (var item in _to_render.Select(x => x.Value).ToList())
+                        {
+                            if (max_x - min_x > _range.MaximumX)
+                            {
+                                var offset = ((max_x - min_x) - _range.MaximumX) + min_x;
+
+                                for (int i = 0; i < item.XX.Count; i++)
+                                {
+                                    if (item.XX[i] < offset)
+                                    {
+                                        item.XX.RemoveAt(i);
+                                        item.YY.RemoveAt(i);
+                                        i--;
+                                    }
+                                    else
+                                    {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -469,6 +517,8 @@ namespace RealTimeGraphX
         /// <param name="maximumY">The maximum y.</param>
         protected virtual void OnVirtualRangeChanged(GraphDataPoint minimumX, GraphDataPoint maximumX, GraphDataPoint minimumY, GraphDataPoint maximumY)
         {
+            if (maximumY is null)
+                return; 
             var range = new RangeChangedEventArgs(minimumX, maximumX, minimumY, maximumY);
             VirtualRangeChanged?.Invoke(this, range);
         }
