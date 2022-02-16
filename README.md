@@ -73,6 +73,11 @@ Each platform (WPF/UWP etc.) should implement it's own *IGraphDataSeries* and *I
         {
             Controller = new WpfGraphController<TimeSpanDataPoint, DoubleDataPoint>();
             Controller.Renderer = new ScrollingLineRenderer<WpfGraphDataSeries>();
+            Controller.Range.MinimumY = 0;
+            Controller.Range.MaximumY = 1080;
+            Controller.Range.MaximumX = TimeSpan.FromSeconds(10);
+            Controller.Range.AutoY = true;
+            Controller.Range.AutoYFallbackMode = GraphRangeAutoYFallBackMode.MinMax;
             Controller.DataSeriesCollection.Add(new WpfGraphDataSeries()
             {
                 Name = "Series Name",
